@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>極簡區域截圖拼圖工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .crop-handle {
+            width: 16px;
+            height: 16px;
+            background-color: #ef4444; /* Bright Red */
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            position: absolute;
+            z-index: 30;
+            touch-action: none;
+            box-shadow: 0 0 4px rgba(0,0,0,0.6);
+        }
+        .crop-handle:hover, .crop-handle:active {
+            transform: scale(1.3);
+            background-color: #f87171;
+        }
+        .crop-box-active {
+            border: 2px solid #ef4444;
+            background-color: rgba(239, 68, 68, 0.15);
+            touch-action: none;
+        }
+        /* 強制允許圖片長按選單與呼叫系統儲存 */
+        .allow-touch-callout {
+            -webkit-touch-callout: default !important;
+            -webkit-user-select: auto !important;
+            user-select: auto !important;
+            pointer-events: auto !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col p-4 sm:p-6 antialiased select-none">
+
+    <header class="max-w-4xl w-full mx-auto mb-6 text-center">
+        <h1 class="text-2xl font-bold text-white flex items-center justify-center gap-2">
+            <i class="fa-solid fa-scissors text-red-500"></i>
+            極簡區域截圖自動拼圖工具
+        </h1>
+        <p class="text-xs text-slate-400 mt-1">選定第 1 張圖的區域 ➔ 點擊確定 ➔ 自動無縫合成長圖</p>
+    </header>
+
+    <main class="max-w-4xl w-full mx-auto space-y-6">
+
+        <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+            <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center font-bold">1</span>
+                        選擇截圖圖片
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1" id="statusText">已選擇 0 張截圖</p>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <label class="cursor-pointer px-5 py-2.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white rounded-xl text-sm font-bold transition flex items-center gap-2 shadow-lg shadow-red-600/30">
+                        <i class="fa-solid fa-folder-open"></i>
+                        <span>上傳多張截圖</span>
+                        <input type="file" id="imageInput" multiple accept="image/*" class="hidden" onchange="handleFileUpload(event)">
+                    </label>
+
+                    <button onclick="generateDemoImages(20)" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-medium transition border border-slate-700">
+                        生成 20 張測試圖
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col items-center">
+            <div class="w-full flex items-center justify-between mb-4">
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <span class="w-6 h-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center font-bold">2</span>
+                    框選第 1 張圖要擷取的文字範圍
+                </h2>
+                <span class="text-xs text-slate-400">請拖拉下方紅框或圓點</span>
+            </div>
+
+            <!-- Single Canvas with Crop Overlay -->
+            <div class="relative w-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center p-2 min-h-[250px] max-h-[500px]" id="canvasContainer">
+                <div class="relative inline-block max-w-full max-h-full" id="canvasWrap">
+                    <canvas id="firstImgCanvas" class="block max-w-full max-h-[460px] object-contain rounded select-none"></canvas>
+
+                    <!-- Interactive Red Crop Box Overlay -->
+                    <div id="cropBoxOverlay" class="absolute crop-box-active cursor-move hidden z-20">
+                        <div class="absolute -top-6 left-0 bg-red-600 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow pointer-events-none whitespace-nowrap">
+                            保留此區域內容
+                        </div>
+                        
+                        <!-- 8 Control Handles -->
+                        <div class="crop-handle handle-tl -top-2 -left-2 cursor-nwse-resize" data-handle="tl"></div>
+                        <div class="crop-handle handle-tc -top-2 left-1/2 -translate-x-1/2 cursor-ns-resize" data-handle="tc"></div>
+                        <div class="crop-handle handle-tr -top-2 -right-2 cursor-nesw-resize" data-handle="tr"></div>
+                        <div class="crop-handle handle-r top-1/2 -right-2 -translate-y-1/2 cursor-ew-resize" data-handle="r"></div>
+                        <div class="crop-handle handle-br -bottom-2 -right-2 cursor-nwse-resize" data-handle="br"></div>
+                        <div class="crop-handle handle-bc -bottom-2 left-1/2 -translate-x-1/2 cursor-ns-resize" data-handle="bc"></div>
+                        <div class="crop-handle handle-bl -bottom-2 -left-2 cursor-nesw-resize" data-handle="bl"></div>
+                        <div class="crop-handle handle-l top-1/2 -left-2 -translate-y-1/2 cursor-ew-resize" data-handle="l"></div>
+                    </div>
+                </div>
+
+                <div id="emptyTip" class="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+                    <i class="fa-solid fa-image text-3xl mb-2 opacity-50"></i>
+                    <p class="text-sm">尚未載入截圖，請先上傳圖片</p>
+                </div>
+            </div>
+
+            <!-- Big Confirm Button -->
+            <button onclick="startStitchingProcess()" id="stitchBtn" disabled class="mt-5 w-full sm:w-auto px-8 py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-base font-bold rounded-xl transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2">
+                <i class="fa-solid fa-check text-lg" id="stitchBtnIcon"></i>
+                <span id="stitchBtnText">確定區域，開始拼接全部圖片</span>
+            </button>
+        </section>
+
+        <section id="resultSection" class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col items-center">
+            <div class="w-full flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <span class="w-6 h-6 rounded-full bg-emerald-500 text-white text-xs flex items-center justify-center font-bold">3</span>
+                    長圖拼接結果
+                </h2>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button onclick="enableLongScreenshotMode()" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-lg shadow-indigo-600/30">
+                        <i class="fa-solid fa-mobile-screen-button"></i>
+                        <span>📱 切換手機長截圖模式 (全頁展開)</span>
+                    </button>
+                    <button onclick="openSaveModal()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg transition flex items-center gap-1.5 border border-slate-700">
+                        <i class="fa-solid fa-expand"></i>
+                        <span>全螢幕檢視/長按儲存</span>
+                    </button>
+                    <button onclick="shareOrDownloadImage()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow">
+                        <i class="fa-solid fa-download"></i>
+                        <span>下載 / 分享儲存圖片</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mobile Tip for Long Press -->
+            <p class="text-xs text-amber-400 mb-3 text-center bg-amber-950/40 border border-amber-800/50 px-3 py-2 rounded-xl w-full flex items-center justify-center gap-1.5">
+                <i class="fa-solid fa-circle-info text-amber-400"></i>
+                <span>提示：如點擊下載無反應，請點擊上方<b>「📱 切換手機長截圖模式」</b>，即可用手機滾動截圖往下滑擷取！</span>
+            </p>
+
+            <!-- Loading Spinner Container -->
+            <div id="stitchingLoading" class="hidden py-12 flex flex-col items-center justify-center gap-3 text-emerald-400">
+                <i class="fa-solid fa-circle-notch fa-spin text-3xl"></i>
+                <p class="text-sm font-medium text-slate-300">正在為您無縫裁切與等比例拼接中，請稍候...</p>
+            </div>
+
+            <div id="resultImageContainer" class="w-full bg-slate-950 rounded-xl border border-slate-800 p-2 sm:p-4 max-h-[600px] overflow-y-auto flex justify-center items-center min-h-[150px] transition-all">
+                <canvas id="outputCanvas" class="hidden"></canvas>
+                <img id="outputImg" onclick="openSaveModal()" class="max-w-full h-auto shadow-2xl rounded border border-slate-800 cursor-pointer block hover:opacity-95 transition allow-touch-callout" alt="長圖拼接結果（點擊可放大長按儲存）" title="點擊開啟全螢幕長按儲存">
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Full-page Long Screenshot Overlay Mode -->
+    <div id="longScreenshotView" class="hidden fixed inset-0 bg-slate-950 z-50 overflow-y-auto flex-col items-center">
+        <!-- Floating Header Control -->
+        <div class="sticky top-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 p-3 flex items-center justify-between w-full max-w-2xl mx-auto rounded-b-2xl shadow-2xl mb-4">
+            <div class="text-xs text-indigo-300 font-bold flex items-center gap-2">
+                <i class="fa-solid fa-mobile-screen text-indigo-400 text-base"></i>
+                <span>長截圖模式已開啟！請使用手機系統「滾動截圖」往下滑</span>
+            </div>
+            <button onclick="disableLongScreenshotMode()" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg transition shadow">
+                退出長截圖模式
+            </button>
+        </div>
+
+        <!-- Fully Expanded Long Image (Exact 1:1 Aspect Ratio) -->
+        <div class="w-full max-w-3xl px-2 pb-24 flex flex-col items-center justify-center">
+            <img id="longScreenshotImg" class="max-w-full h-auto block rounded shadow-2xl border border-slate-800 allow-touch-callout" alt="長頁面展開圖">
+        </div>
+    </div>
+
+    <!-- Fullscreen Save Modal overlay for iframe protection -->
+    <div id="saveModal" class="fixed inset-0 bg-black/90 z-50 hidden flex-col items-center justify-between p-4 backdrop-blur-sm overflow-y-auto">
+        <div class="w-full max-w-xl flex items-center justify-between bg-slate-900/90 p-3 rounded-2xl border border-slate-800 sticky top-0 z-10 shadow-2xl">
+            <div class="flex items-center gap-2 text-xs sm:text-sm text-slate-200 font-bold">
+                <i class="fa-solid fa-floppy-disk text-emerald-400"></i>
+                <span>儲存圖片提示：長按圖片或使用下方按鈕</span>
+            </div>
+            <button onclick="closeSaveModal()" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <div class="my-auto py-6 flex flex-col items-center max-w-full">
+            <p class="text-xs text-emerald-400 mb-3 bg-emerald-950/60 border border-emerald-800/50 px-4 py-2 rounded-full font-medium text-center">
+                📱 手機端：請「長按下方圖片」選取「加入照片/儲存圖片」
+            </p>
+            <img id="modalImg" class="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl border border-slate-800 allow-touch-callout" alt="全螢幕長圖">
+        </div>
+
+        <div class="flex items-center gap-3 flex-wrap justify-center">
+            <button onclick="shareOrDownloadImage()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-xl transition shadow-lg shadow-emerald-600/30 flex items-center gap-2">
+                <i class="fa-solid fa-download"></i>
+                <span>下載 / 儲存圖片到裝置</span>
+            </button>
+            <button onclick="closeSaveModal()" class="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold rounded-xl transition border border-slate-700">
+                關閉全螢幕
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let rawImages = [];
+        let cropRect = { x: 0.05, y: 0.15, w: 0.9, h: 0.7 }; // Relative 0.0 ~ 1.0
+        let activeHandle = null;
+        let dragStartPos = { x: 0, y: 0 };
+        let startCropRect = { x: 0, y: 0, w: 0, h: 0 };
+        let currentBlobUrl = null;
+        let currentBlob = null;
+
+        const firstImgCanvas = document.getElementById('firstImgCanvas');
+        const firstCtx = firstImgCanvas.getContext('2d');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const outputCtx = outputCanvas.getContext('2d');
+        const cropBoxOverlay = document.getElementById('cropBoxOverlay');
+
+        // Handle User File Upload
+        function handleFileUpload(event) {
+            const files = Array.from(event.target.files);
+            if (!files || files.length === 0) return;
+
+            files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+            rawImages = [];
+            let loadedCount = 0;
+
+            files.forEach((file, index) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        rawImages[index] = img;
+                        loadedCount++;
+                        if (loadedCount === files.length) {
+                            rawImages = rawImages.filter(Boolean);
+                            onImagesLoaded();
+                        }
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // On Images Loaded State Update
+        function onImagesLoaded() {
+            document.getElementById('statusText').innerText = `已成功載入 ${rawImages.length} 張截圖`;
+            document.getElementById('emptyTip').classList.add('hidden');
+            document.getElementById('stitchBtn').disabled = rawImages.length === 0;
+
+            drawFirstImage();
+            syncCropOverlayPosition();
+        }
+
+        // Draw Image #1 only
+        function drawFirstImage() {
+            if (!rawImages.length) return;
+            const img1 = rawImages[0];
+
+            firstImgCanvas.width = img1.width;
+            firstImgCanvas.height = img1.height;
+            firstCtx.drawImage(img1, 0, 0);
+        }
+
+        // Position the Overlay Red Crop Box over Image #1
+        function syncCropOverlayPosition() {
+            if (!rawImages.length) {
+                cropBoxOverlay.classList.add('hidden');
+                return;
+            }
+            cropBoxOverlay.classList.remove('hidden');
+
+            const canvasWidth = firstImgCanvas.clientWidth;
+            const canvasHeight = firstImgCanvas.clientHeight;
+
+            const left = cropRect.x * canvasWidth;
+            const top = cropRect.y * canvasHeight;
+            const width = cropRect.w * canvasWidth;
+            const height = cropRect.h * canvasHeight;
+
+            cropBoxOverlay.style.left = `${left}px`;
+            cropBoxOverlay.style.top = `${top}px`;
+            cropBoxOverlay.style.width = `${width}px`;
+            cropBoxOverlay.style.height = `${height}px`;
+        }
+
+        // Handle Dragging Crop Box & Handles WITHOUT page jumps
+        function initDragEvents() {
+            const overlay = document.getElementById('cropBoxOverlay');
+
+            function startDrag(e) {
+                if (!rawImages.length) return;
+                e.stopPropagation();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+                const target = e.target;
+                if (target.dataset && target.dataset.handle) {
+                    activeHandle = target.dataset.handle;
+                } else {
+                    activeHandle = 'move';
+                }
+
+                dragStartPos = { x: clientX, y: clientY };
+                startCropRect = { ...cropRect };
+
+                window.addEventListener('mousemove', onDrag);
+                window.addEventListener('mouseup', stopDrag);
+                window.addEventListener('touchmove', onDrag, { passive: false });
+                window.addEventListener('touchend', stopDrag);
+            }
+
+            function onDrag(e) {
+                if (!activeHandle || !rawImages.length) return;
+                if (e.cancelable) e.preventDefault();
+
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+                const containerRect = firstImgCanvas.getBoundingClientRect();
+                if (containerRect.width === 0 || containerRect.height === 0) return;
+
+                const deltaX = (clientX - dragStartPos.x) / containerRect.width;
+                const deltaY = (clientY - dragStartPos.y) / containerRect.height;
+
+                let { x, y, w, h } = startCropRect;
+
+                if (activeHandle === 'move') {
+                    x = Math.max(0, Math.min(1 - w, startCropRect.x + deltaX));
+                    y = Math.max(0, Math.min(1 - h, startCropRect.y + deltaY));
+                } else {
+                    if (activeHandle.includes('r')) w = Math.max(0.05, Math.min(1 - x, startCropRect.w + deltaX));
+                    if (activeHandle.includes('l')) {
+                        const newW = Math.max(0.05, startCropRect.w - deltaX);
+                        x = Math.max(0, startCropRect.x + (startCropRect.w - newW));
+                        w = newW;
+                    }
+                    if (activeHandle.includes('b')) h = Math.max(0.05, Math.min(1 - y, startCropRect.h + deltaY));
+                    if (activeHandle.includes('t')) {
+                        const newH = Math.max(0.05, startCropRect.h - deltaY);
+                        y = Math.max(0, startCropRect.y + (startCropRect.h - newH));
+                        h = newH;
+                    }
+                }
+
+                cropRect = { x, y, w, h };
+                syncCropOverlayPosition();
+            }
+
+            function stopDrag() {
+                activeHandle = null;
+                window.removeEventListener('mousemove', onDrag);
+                window.removeEventListener('mouseup', stopDrag);
+                window.removeEventListener('touchmove', onDrag);
+                window.removeEventListener('touchend', stopDrag);
+            }
+
+            overlay.addEventListener('mousedown', startDrag);
+            overlay.addEventListener('touchstart', startDrag, { passive: false });
+        }
+
+        // Execute Batch Stitching with GUARANTEED Zero Aspect Ratio Distortion
+        function startStitchingProcess() {
+            if (!rawImages.length) return;
+
+            const resultSection = document.getElementById('resultSection');
+            const stitchingLoading = document.getElementById('stitchingLoading');
+            const outputImg = document.getElementById('outputImg');
+            const stitchBtn = document.getElementById('stitchBtn');
+            const stitchBtnText = document.getElementById('stitchBtnText');
+            const stitchBtnIcon = document.getElementById('stitchBtnIcon');
+
+            // UI Loading state
+            resultSection.classList.remove('hidden');
+            stitchingLoading.classList.remove('hidden');
+            outputImg.classList.add('hidden');
+            stitchBtn.disabled = true;
+            stitchBtnText.innerText = "正在裁切拼接中...";
+            stitchBtnIcon.className = "fa-solid fa-spinner fa-spin text-lg";
+
+            resultSection.scrollIntoView({ behavior: 'smooth' });
+
+            setTimeout(() => {
+                // 1. Calculate source crop dimensions and exact aspect ratio for each slice
+                const slices = rawImages.map(img => {
+                    const sx = cropRect.x * img.width;
+                    const sy = cropRect.y * img.height;
+                    const sw = cropRect.w * img.width;
+                    const sh = cropRect.h * img.height;
+                    return { img, sx, sy, sw, sh, aspect: sw / sh };
+                });
+
+                // 2. Base target width off Image #1's cropped width
+                const targetWidth = slices[0].sw;
+
+                // 3. Calculate unscaled slice height matching targetWidth (100% aspect ratio preserved)
+                let unscaledTotalHeight = 0;
+                slices.forEach(s => {
+                    s.unscaledHeight = targetWidth / s.aspect;
+                    unscaledTotalHeight += s.unscaledHeight;
+                });
+
+                // 4. Hardware Safety Height Limit (7200px max height to protect mobile GPU)
+                const MAX_CANVAS_HEIGHT = 7200;
+                let scale = 1;
+                if (unscaledTotalHeight > MAX_CANVAS_HEIGHT) {
+                    scale = MAX_CANVAS_HEIGHT / unscaledTotalHeight;
+                }
+
+                // 5. Final Canvas Dimensions - Scale width & height by exact SAME ratio -> 0% DISTORTION
+                const finalWidth = Math.max(1, Math.round(targetWidth * scale));
+                const finalTotalHeight = Math.max(1, Math.round(unscaledTotalHeight * scale));
+
+                outputCanvas.width = finalWidth;
+                outputCanvas.height = finalTotalHeight;
+
+                // Clear background with solid white
+                outputCtx.fillStyle = '#ffffff';
+                outputCtx.fillRect(0, 0, finalWidth, finalTotalHeight);
+
+                // 6. Draw each cropped slice with exact aspect ratio
+                let currentY = 0;
+                slices.forEach(s => {
+                    const sliceH = s.unscaledHeight * scale;
+                    outputCtx.drawImage(
+                        s.img,
+                        s.sx, s.sy, s.sw, s.sh,
+                        0, currentY, finalWidth, sliceH
+                    );
+                    currentY += sliceH;
+                });
+
+                // 7. Output to Blob URL for mobile compatibility
+                outputCanvas.toBlob((blob) => {
+                    if (!blob) return;
+
+                    if (currentBlobUrl && currentBlobUrl.startsWith('blob:')) {
+                        URL.revokeObjectURL(currentBlobUrl);
+                    }
+
+                    currentBlob = blob;
+                    currentBlobUrl = URL.createObjectURL(blob);
+
+                    outputImg.src = currentBlobUrl;
+                    document.getElementById('modalImg').src = currentBlobUrl;
+                    document.getElementById('longScreenshotImg').src = currentBlobUrl;
+
+                    outputImg.classList.remove('hidden');
+                    stitchingLoading.classList.add('hidden');
+
+                    stitchBtn.disabled = false;
+                    stitchBtnText.innerText = "確定區域，開始拼接全部圖片";
+                    stitchBtnIcon.className = "fa-solid fa-check text-lg";
+                }, 'image/jpeg', 0.92);
+            }, 100);
+        }
+
+        // Multi-tier Download & Share Handler
+        async function shareOrDownloadImage() {
+            if (!currentBlobUrl || !currentBlob) return;
+
+            // 1. Try Native Web Share API if available
+            if (navigator.canShare) {
+                try {
+                    const file = new File([currentBlob], `stitched-image-${Date.now()}.jpg`, { type: 'image/jpeg' });
+                    if (navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                            files: [file],
+                            title: '區域截圖長圖',
+                            text: '長圖拼接結果'
+                        });
+                        return;
+                    }
+                } catch (err) {
+                    console.log("Share skipped or cancelled:", err);
+                }
+            }
+
+            // 2. Fallback to anchor link direct download
+            const link = document.createElement('a');
+            link.download = `stitched-image-${Date.now()}.jpg`;
+            link.href = currentBlobUrl;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Open Fullscreen Save Modal
+        function openSaveModal() {
+            if (!currentBlobUrl) return;
+            document.getElementById('saveModal').classList.remove('hidden');
+            document.getElementById('saveModal').classList.add('flex');
+        }
+
+        // Close Fullscreen Save Modal
+        function closeSaveModal() {
+            document.getElementById('saveModal').classList.add('hidden');
+            document.getElementById('saveModal').classList.remove('flex');
+        }
+
+        // Enable Full-Page Scroll Mode for Native Phone Long Screenshots
+        function enableLongScreenshotMode() {
+            if (!currentBlobUrl) return;
+            const view = document.getElementById('longScreenshotView');
+            const img = document.getElementById('longScreenshotImg');
+            img.src = currentBlobUrl;
+            view.classList.remove('hidden');
+            view.classList.add('flex');
+            window.scrollTo({ top: 0 });
+        }
+
+        // Disable Long Screenshot Mode
+        function disableLongScreenshotMode() {
+            const view = document.getElementById('longScreenshotView');
+            view.classList.add('hidden');
+            view.classList.remove('flex');
+        }
+
+        // Generate Mock Screenshots
+        function generateDemoImages(count = 20) {
+            rawImages = [];
+            const width = 1080;
+            const height = 2400;
+
+            for (let i = 0; i < count; i++) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const ctx = tempCanvas.getContext('2d');
+
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, width, height);
+
+                // Top status bar
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(0, 0, width, 120);
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.fillText(`12:00 PM • 5G (第 ${i + 1}/${count} 頁頂欄)`, 40, 75);
+
+                // Chat Messages (Target Region)
+                for (let j = 0; j < 4; j++) {
+                    const y = 200 + j * 450;
+                    ctx.fillStyle = '#1e293b';
+                    ctx.beginPath();
+                    ctx.roundRect(50, y, 980, 380, 24);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#38bdf8';
+                    ctx.font = 'bold 44px sans-serif';
+                    ctx.fillText(`【第 ${i + 1} 張截圖 - 對話片段 #${j + 1}】`, 90, y + 100);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '36px sans-serif';
+                    ctx.fillText(`這是我要留下來的訊息文字內容...`, 90, y + 200);
+                    ctx.fillText(`時間: 10:20:0${j}`, 90, y + 280);
+                }
+
+                // Bottom bar
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(0, height - 160, width, 160);
+                ctx.fillStyle = '#64748b';
+                ctx.fillText(`底欄按鈕列 (會被剔除)`, 350, height - 60);
+
+                const img = new Image();
+                img.src = tempCanvas.toDataURL('image/png');
+                img.onload = () => {
+                    rawImages.push(img);
+                    if (rawImages.length === count) {
+                        onImagesLoaded();
+                    }
+                };
+            }
+        }
+
+        window.onload = function() {
+            initDragEvents();
+            generateDemoImages(20);
+            window.addEventListener('resize', syncCropOverlayPosition);
+        };
+    </script>
+</body>
+</html>
